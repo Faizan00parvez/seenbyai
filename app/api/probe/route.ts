@@ -2,7 +2,7 @@
 // Step 2: asks Gemini 4 localized buyer-intent questions, classifies each
 // answer as invisible / mentioned / recommended, returns 0-100 score.
 // MOCK mode (no GEMINI_API_KEY): returns clearly-labeled stub data.
-import { callGemini, isMockMode, parseJsonResponse, sleep } from "@/lib/gemini";
+import { callGemini, isMockMode, parseJsonResponse } from "@/lib/gemini";
 import { getQuestions } from "@/lib/questions";
 import { ProbeResult, Verdict } from "@/lib/types";
 
@@ -84,15 +84,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Sequential answers with pacing (Gemini free-tier friendly)
-    const qa: { question: string; answer: string }[] = [];
-    for (let i = 0; i < questions.length; i++) {
-      if (i > 0) await sleep(2500);
-      const answer = await callGemini(ANSWER_PROMPT(questions[i]), { temperature: 0.7 });
-      qa.push({ question: questions[i], answer });
-    }
+    // Answer calls run concurrently: 4 sequential calls + pacing sleeps
+    // exceeded Vercel's 50s function limit (FUNCTION_INVOCATION_TIMEOUT).
+    // Per-call 429/503 backoff in callGemini still applies.
+    const answers = await Promise.all(
+      questions.map((q) => callGemini(ANSWER_PROMPT(q), { temperature: 0.7 }))
+    );
+    const qa = questions.map((question, i) => ({ question, answer: answers[i] }));
 
-    await sleep(2500);
     const raw = await callGemini(
       CLASSIFY_PROMPT(businessName, city, category, body.website || "", qa),
       { json: true, temperature: 0.2 }
