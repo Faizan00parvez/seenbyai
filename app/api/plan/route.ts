@@ -228,7 +228,11 @@ export async function POST(req: Request) {
     const report = saveReport({ business, score, crawl, probes, fixes, mock });
     return Response.json({ id: report.id });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Plan generation failed";
+    const raw = e instanceof Error ? e.message : "Plan generation failed";
+    const msg =
+      /429|quota|rate limit|overloaded|503/i.test(raw)
+        ? "The AI service is temporarily out of quota — please wait a few minutes and run the audit again."
+        : raw;
     return Response.json({ error: msg }, { status: 502 });
   }
 }
