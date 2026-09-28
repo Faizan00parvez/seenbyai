@@ -110,7 +110,7 @@ async function attemptModel(
       // immediately (no same-model retry — a hanging model won't recover in
       // 4s). Thrown out of the retry loop so callGemini moves to next model.
       const err = new Error(
-        `Gemini model ${model} timed out or unreachable: ${
+        `Gemini model ${model} timed out (service overloaded or unreachable): ${
           e instanceof Error ? e.message : "?"
         }`
       ) as ApiError;
