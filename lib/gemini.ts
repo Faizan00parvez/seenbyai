@@ -3,6 +3,11 @@
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
+// Per-attempt fetch budget. gemini-3.7-flash was observed hanging indefinitely
+// (no response at all) while siblings answered in ~1.5s — without this, a hung
+// model stalls the whole serverless function until Vercel kills it at 50s.
+const FETCH_TIMEOUT_MS = 15000;
+
 export function isMockMode(): boolean {
   return !process.env.GEMINI_API_KEY;
 }
@@ -53,8 +58,15 @@ export async function callGemini(
       return await attemptModel(key, model, prompt, json, temperature, maxRetries);
     } catch (e) {
       lastErr = e as ApiError;
-      // 400/404 = bad model name for this key; 503 = overloaded -> try next candidate
-      if (lastErr.code === 400 || lastErr.code === 404 || lastErr.code === 503) continue;
+      // 400/404 = bad model name for this key; 429 = per-model quota -> next
+      // model may have its own quota; 503 = overloaded -> try next candidate
+      if (
+        lastErr.code === 400 ||
+        lastErr.code === 404 ||
+        lastErr.code === 429 ||
+        lastErr.code === 503
+      )
+        continue;
       throw lastErr;
     }
   }
@@ -72,18 +84,37 @@ async function attemptModel(
   const url = `${API_BASE}/models/${model}:generateContent`;
   let delayMs = 4000;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url, {
-      method: "POST",
-      // x-goog-api-key header keeps the key out of URL/logs
-      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          ...(json ? { responseMimeType: "application/json" } : {}),
-        },
-      }),
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        // x-goog-api-key header keeps the key out of URL/logs
+        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature,
+            ...(json ? { responseMimeType: "application/json" } : {}),
+          },
+        }),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      // Hung model or network failure: fail over to the next candidate
+      // immediately (no same-model retry — a hanging model won't recover in
+      // 4s). Thrown out of the retry loop so callGemini moves to next model.
+      const err = new Error(
+        `Gemini model ${model} timed out or unreachable: ${
+          e instanceof Error ? e.message : "?"
+        }`
+      ) as ApiError;
+      err.code = 503;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
 
     if ((res.status === 429 || res.status === 503) && attempt < maxRetries) {
       await sleep(delayMs + Math.random() * 1000);
