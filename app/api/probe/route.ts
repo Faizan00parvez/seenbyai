@@ -87,14 +87,18 @@ export async function POST(req: Request) {
     // Answer calls run concurrently: 4 sequential calls + pacing sleeps
     // exceeded Vercel's 50s function limit (FUNCTION_INVOCATION_TIMEOUT).
     // Per-call 429/503 backoff in callGemini still applies.
+    // maxRetries: 1 — fail fast on quota/overload instead of burning ~28s
+    // in backoff sleeps (which pushed slow-429 responses into the 50s limit).
     const answers = await Promise.all(
-      questions.map((q) => callGemini(ANSWER_PROMPT(q), { temperature: 0.7 }))
+      questions.map((q) =>
+        callGemini(ANSWER_PROMPT(q), { temperature: 0.7, maxRetries: 1 })
+      )
     );
     const qa = questions.map((question, i) => ({ question, answer: answers[i] }));
 
     const raw = await callGemini(
       CLASSIFY_PROMPT(businessName, city, category, body.website || "", qa),
-      { json: true, temperature: 0.2 }
+      { json: true, temperature: 0.2, maxRetries: 1 }
     );
     const classified = parseJsonResponse<
       { index: number; verdict: Verdict; details_accurate: boolean | null; accuracyNote: string }[]
@@ -125,7 +129,13 @@ export async function POST(req: Request) {
       mock: false,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Probe failed";
+    const raw = e instanceof Error ? e.message : "Probe failed";
+    // Translate quota/overload failures into a human message — the frontend
+    // surfaces data.error verbatim.
+    const msg =
+      /429|quota|rate limit|overloaded|503/i.test(raw)
+        ? "The AI service is temporarily out of quota — please wait a few minutes and run the audit again."
+        : raw;
     return Response.json({ error: msg }, { status: 502 });
   }
 }
