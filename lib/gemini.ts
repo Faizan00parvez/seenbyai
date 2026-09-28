@@ -22,7 +22,6 @@ function modelCandidates(): string[] {
     "gemini-3.8-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
   ];
   return [primary, ...fallbacks.filter((m) => m !== primary)];
 }
@@ -53,11 +52,16 @@ export async function callGemini(
   }
   const { json = false, temperature = 0.7, maxRetries = 3 } = opts;
   let lastErr: ApiError = new Error("No models attempted");
+  let quotaErr: ApiError | null = null;
   for (const model of modelCandidates()) {
     try {
       return await attemptModel(key, model, prompt, json, temperature, maxRetries);
     } catch (e) {
       lastErr = e as ApiError;
+      // Remember quota errors: if every model fails, a 429 is the most
+      // actionable error to surface (drives the friendly "try again later"
+      // message), not a trailing 404/503 from the last candidate.
+      if (lastErr.code === 429 && !quotaErr) quotaErr = lastErr;
       // 400/404 = bad model name for this key; 429 = per-model quota -> next
       // model may have its own quota; 503 = overloaded -> try next candidate
       if (
@@ -70,7 +74,7 @@ export async function callGemini(
       throw lastErr;
     }
   }
-  throw lastErr;
+  throw quotaErr ?? lastErr;
 }
 
 async function attemptModel(
