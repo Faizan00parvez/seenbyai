@@ -13,16 +13,13 @@ export function isMockMode(): boolean {
 }
 
 function modelCandidates(): string[] {
-  // 3.x-flash models are the current free-tier generation (the API itself
-  // recommends them; 2.x names 404 for new keys). 3.7 first: it answered 200
-  // while siblings were 503-overloaded at test time — order is best-effort,
-  // the client falls through on 503 anyway.
-  const primary = process.env.GEMINI_MODEL || "gemini-3.7-flash";
-  const fallbacks = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-  ];
+  // Ordered fastest/most-reliable first (measured 2026-09-28): 3.6-flash
+  // answers in ~1-2s, 3.8-flash in ~5s, 3.7-flash in 10-25s (it trips the
+  // 15s per-attempt budget under parallel load). 3.5-flash is currently
+  // 503 on Google's side, so it is excluded. Order is best-effort — the
+  // client falls through on 503 anyway.
+  const primary = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  const fallbacks = ["gemini-3.8-flash", "gemini-3.7-flash"];
   return [primary, ...fallbacks.filter((m) => m !== primary)];
 }
 
