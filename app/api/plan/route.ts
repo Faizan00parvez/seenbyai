@@ -212,6 +212,7 @@ export async function POST(req: Request) {
       const raw = await callGemini(PLAN_PROMPT(business, crawl, probes), {
         json: true,
         temperature: 0.5,
+        maxRetries: 0, // failover across models is the resilience mechanism
       });
       fixes = sanitizeFixes(parseJsonResponse(raw));
     }
