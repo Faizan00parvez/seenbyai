@@ -86,11 +86,9 @@ export async function POST(req: Request) {
   try {
     // Answer calls run concurrently: 4 sequential calls + pacing sleeps
     // exceeded Vercel's 50s function limit (FUNCTION_INVOCATION_TIMEOUT).
-    // Per-call 429/503 backoff in callGemini still applies.
     // Failover (not retry) is the resilience mechanism: callGemini walks 5
-    // model candidates, and attemptModel aborts any hung model after 15s.
-    // maxRetries: 0 — the 5-model failover chain in callGemini is the
-    // resilience mechanism; same-model retries just burn the 50s budget.
+    // model candidates and aborts any hung model after 15s, so maxRetries: 0
+    // (same-model retries would just burn the 50s function budget).
     const answers = await Promise.all(
       questions.map((q) =>
         callGemini(ANSWER_PROMPT(q), { temperature: 0.7, maxRetries: 0 })
